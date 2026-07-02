@@ -1,63 +1,73 @@
 #!/bin/sh
 
-# Function to clean up on script exit
-cleanup() {
-    echo "Unmounting mergerfs..."
-    umount /merged
-    echo "Unmounted mergerfs."
-}
+set -eu
 
-# Set debugging options
-# set -e  # Exit immediately if a command exits with a non-zero status
-# set -x  # Print commands and their arguments as they are executed
-
-# Define the default parameters file
 PARAMETERS_FILE="/config/parameters.conf"
+MERGERFS_PID=""
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
-# Determine source of parameters
-if [ -n "$MERGERFS_PARAMS" ]; then
+cleanup() {
+    log "Cleaning up mergerfs..."
+
+    if [ -n "$MERGERFS_PID" ] && kill -0 "$MERGERFS_PID" 2>/dev/null; then
+        kill "$MERGERFS_PID" 2>/dev/null || true
+        wait "$MERGERFS_PID" 2>/dev/null || true
+    fi
+
+    if grep -q " /merged " /proc/mounts; then
+        fusermount3 -uz /merged 2>/dev/null \
+        || fusermount -uz /merged 2>/dev/null \
+        || umount -l /merged 2>/dev/null \
+        || true
+    fi
+
+    log "Cleanup complete."
+}
+
+trap cleanup EXIT INT TERM
+
+if [ -n "${MERGERFS_PARAMS:-}" ]; then
     log "Using parameters from MERGERFS_PARAMS environment variable."
     PARAMS="$MERGERFS_PARAMS"
 else
     if [ ! -f "$PARAMETERS_FILE" ]; then
-        log "Error: /config/parameters.conf not found and MERGERFS_PARAMS is not set."
+        log "Error: $PARAMETERS_FILE not found and MERGERFS_PARAMS is not set."
         exit 1
     fi
 
-    # Merge parameters from the file into a single line without comments or empty lines
-    PARAMS=$(grep -v '^\s*#' "$PARAMETERS_FILE" | sed '/^\s*$/d' | sed 's/^[ \t]*//;s/[ \t]*$//' | paste -sd ',' -)
+    PARAMS=$(
+        grep -v '^[[:space:]]*#' "$PARAMETERS_FILE" \
+        | sed '/^[[:space:]]*$/d' \
+        | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+        | paste -sd ',' -
+    )
 
     if [ -z "$PARAMS" ]; then
         log "Error: No valid parameters found in $PARAMETERS_FILE."
         exit 1
-    else
-        log "Collecting parameters from configuration file found at /config/parameters.conf"
     fi
+
+    log "Using parameters from $PARAMETERS_FILE."
 fi
 
+if [ ! -d /merged ]; then
+    log "Error: /merged does not exist."
+    exit 1
+fi
 
-# Prepare the mergerfs command
-COMMAND="mergerfs -o $PARAMS /disks/* /merged"
+set -- /disks/*
 
-# Print the command being executed
-echo "Executing: $COMMAND"
+if [ ! -e "$1" ]; then
+    log "Error: No branches found under /disks."
+    exit 1
+fi
 
-# Mount using mergerfs
-$COMMAND
+log "Executing: mergerfs -f -o $PARAMS /disks/* /merged"
 
-# Trap SIGTERM signal of docker daemon
-trap cleanup SIGTERM
+mergerfs -f -o "$PARAMS" "$@" /merged &
+MERGERFS_PID="$!"
 
-# Trap exit signals to ensure cleanup
-trap cleanup EXIT INT
-
-# Wait for mergerfs process to finish
-while [[ $(ps -eo 'comm' | grep mergerfs -c) -gt 0 ]]; do
-    sleep 1
-done
-
-echo "mergerfs terminated"
+wait "$MERGERFS_PID"
