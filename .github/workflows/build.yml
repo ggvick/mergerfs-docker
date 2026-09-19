@@ -38,27 +38,9 @@ jobs:
         with:
           push: true
           tags: |
-            hvalev/mergerfs:${{ steps.get_version.outputs.version }}
-            hvalev/mergerfs:latest
+            ${{ secrets.DOCKERHUBUNAME }}/mergerfs:${{ steps.get_version.outputs.version }}
+            ${{ secrets.DOCKERHUBUNAME }}/mergerfs:latest
           target: mergerfs-release
-          context: .
-          platforms: |
-            linux/amd64,
-            linux/arm64,
-            linux/ppc64le,
-            linux/s390x,
-            linux/riscv64
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: build mergerfs-tools docker image
-        uses: docker/build-push-action@v7
-        with:
-          push: true
-          tags: |
-            hvalev/mergerfs:tools-${{ steps.get_version.outputs.version }}
-            hvalev/mergerfs:tools-latest
-          target: mergerfs-tools-release
           context: .
           platforms: |
             linux/amd64,
@@ -74,4 +56,4 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUBUNAME }}
           password: ${{ secrets.DOCKERHUBPWD }}
-          repository: hvalev/mergerfs
+          repository: ${{ secrets.DOCKERHUBUNAME }}/mergerfs
