@@ -1,0 +1,5 @@
+*
+!Dockerfile
+!entrypoint.sh
+!mergerfs-version.txt
+!parameters.conf

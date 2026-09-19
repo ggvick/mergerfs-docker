@@ -1,43 +1,30 @@
-FROM alpine:3.24.1 AS builder-mergerfs
-ENV MERGERFS_VERSION=2.42.0
+# syntax=docker/dockerfile:1
 
-RUN apk add g++ git linux-headers make python3
-RUN git clone https://github.com/trapexit/mergerfs /mergerfs
-WORKDIR /mergerfs
+ARG ALPINE_VERSION=3.24.1
 
-RUN git checkout -b $MERGERFS_VERSION
-RUN make
-RUN mv build/mergerfs /bin/mergerfs
+FROM alpine:${ALPINE_VERSION} AS builder
 
-FROM builder-mergerfs AS builder-mergerfs-tools
-RUN git clone https://github.com/trapexit/mergerfs-tools.git /mergerfs-tools
+COPY mergerfs-version.txt /tmp/mergerfs-version.txt
 
-WORKDIR /mergerfs-tools
-RUN make
-RUN mv src/mergerfs.* /bin/
-RUN chmod +x /bin/mergerfs.*
+RUN set -eu; \
+    apk add --no-cache g++ git linux-headers make; \
+    mergerfs_version="$(tr -d '[:space:]' < /tmp/mergerfs-version.txt)"; \
+    test -n "$mergerfs_version"; \
+    git clone --depth 1 --branch "$mergerfs_version" https://github.com/trapexit/mergerfs /tmp/mergerfs; \
+    make -C /tmp/mergerfs RELEASE=1 NDEBUG=1 LTO=1 STATIC=1 DESTDIR=/tmp/install -j"$(nproc)" install-strip; \
+    /tmp/install/usr/local/bin/mergerfs --version
 
-FROM alpine:3.24.1 AS mergerfs-release
-COPY --from=builder-mergerfs /bin/mergerfs /usr/local/bin/mergerfs
+FROM alpine:${ALPINE_VERSION} AS mergerfs-release
 
-RUN apk --no-cache add fuse libgcc libstdc++
-RUN echo user_allow_other >> /etc/fuse.conf
+RUN set -eu; \
+    apk add --no-cache fuse3; \
+    mkdir -p /config /disks /merged
 
+COPY --from=builder /tmp/install/usr/local/bin/mergerfs /usr/local/bin/mergerfs
 COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
-
-RUN mkdir /config
 COPY parameters.conf /config/parameters.conf
 
-RUN mkdir /disks
-
-VOLUME /merged
-
-ENTRYPOINT ["/entrypoint.sh"]
-
-FROM mergerfs-release AS mergerfs-tools-release
-COPY --from=builder-mergerfs-tools /bin/mergerfs.* /usr/local/bin/
-
-RUN apk add python3 rsync
+RUN chmod 0755 /entrypoint.sh /usr/local/bin/mergerfs
+RUN addgroup -g 568 abc && adduser -D -u 568 -G abc abc
 
 ENTRYPOINT ["/entrypoint.sh"]
